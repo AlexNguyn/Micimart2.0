@@ -667,12 +667,20 @@ app.delete("/api/users/:id", auth, can("admin"), async (req, res) => {
   if (uid === req.user.id) {
     return res.status(400).json({ error: "Không thể xóa tài khoản đang đăng nhập" });
   }
+  const client = await pool.connect();
   try {
-    await pool.query(`DELETE FROM users WHERE id = $1`, [uid]);
+    // Null hoá các cột FK trong orders trước khi xóa user
+    // (orders không có ON DELETE SET NULL vì DB cũ có thể thiếu constraint)
+    await client.query(`UPDATE orders SET cashier_id  = NULL WHERE cashier_id  = $1`, [uid]);
+    await client.query(`UPDATE orders SET customer_id = NULL WHERE customer_id = $1`, [uid]);
+    await client.query(`UPDATE orders SET delivery_id = NULL WHERE delivery_id = $1`, [uid]);
+    await client.query(`DELETE FROM users WHERE id = $1`, [uid]);
     res.json({ message: "Đã xóa tài khoản" });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Lỗi hệ thống" });
+    console.error("Lỗi xóa user:", err);
+    res.status(500).json({ error: "Lỗi hệ thống: " + err.message });
+  } finally {
+    client.release();
   }
 });
 
