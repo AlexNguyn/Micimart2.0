@@ -4595,6 +4595,11 @@
           ? Math.round(p.selling_price * (1 - p.discount_percent / 100))
           : p.selling_price;
         const ex = posCart.find((x) => x.id === id);
+        const currentQty = ex ? ex.qty : 0;
+        if (currentQty >= p.stock) {
+          toast(`Đã đạt giới hạn tồn kho! Còn ${p.stock} ${p.unit}`, "err");
+          return;
+        }
         if (ex) ex.qty++;
         else posCart.push({ ...p, selling_price: price, qty: 1 });
         renderPOSCart();
@@ -4604,7 +4609,14 @@
       function posChangeQty(id, d) {
         const item = posCart.find((x) => x.id === id);
         if (!item) return;
-        item.qty = Math.max(1, item.qty + d);
+        const prod = allProds.find((x) => x.id === id);
+        const maxQty = prod ? prod.stock : 9999;
+        const newQty = item.qty + d;
+        if (newQty > maxQty) {
+          toast(`Chỉ còn ${maxQty} ${prod?.unit || "cái"} trong kho!`, "err");
+          return;
+        }
+        item.qty = Math.max(1, newQty);
         renderPOSCart();
       }
 
@@ -5001,7 +5013,18 @@
           if (!p) return;
           document.getElementById("pCode").value = p.code;
           document.getElementById("pName").value = p.name;
-          document.getElementById("pCat").value = p.category;
+          // Đảm bảo option Danh mục tồn tại trước khi set value
+          const catSel = document.getElementById("pCat");
+          const catExists = Array.from(catSel.options).some(
+            (o) => o.value === p.category,
+          );
+          if (!catExists && p.category) {
+            const opt = document.createElement("option");
+            opt.value = p.category;
+            opt.textContent = p.category;
+            catSel.appendChild(opt);
+          }
+          catSel.value = p.category;
           document.getElementById("pUnit").value = p.unit;
           document.getElementById("pCost").value = p.cost_price;
           document.getElementById("pPrice").value = p.selling_price;
@@ -5029,8 +5052,27 @@
       async function saveProd() {
         const code = document.getElementById("pCode").value.trim();
         const name = document.getElementById("pName").value.trim();
-        if (!code || !name) {
-          toast("Vui lòng điền mã và tên sản phẩm!", "err");
+        const cost = document.getElementById("pCost").value;
+        const price = document.getElementById("pPrice").value;
+        const stock = document.getElementById("pStock").value;
+        if (!code) {
+          toast("Vui lòng điền Mã sản phẩm!", "err");
+          return;
+        }
+        if (!name) {
+          toast("Vui lòng điền Tên sản phẩm!", "err");
+          return;
+        }
+        if (cost === "" || cost === null) {
+          toast("Vui lòng điền Giá nhập!", "err");
+          return;
+        }
+        if (price === "" || price === null) {
+          toast("Vui lòng điền Giá bán!", "err");
+          return;
+        }
+        if (stock === "" || stock === null) {
+          toast("Vui lòng điền Tồn kho!", "err");
           return;
         }
 
@@ -5046,6 +5088,19 @@
           icon: document.getElementById("pIcon").value || "📦",
           discount_percent: +document.getElementById("pDiscount").value || 0,
         };
+
+        // Kiểm tra trùng tên sản phẩm ở frontend
+        if (!editProdId) {
+          const dupName = allProds.find(
+            (p) =>
+              p.name.trim().toLowerCase() === body.name.trim().toLowerCase() &&
+              p.is_active !== false,
+          );
+          if (dupName) {
+            toast("Tên sản phẩm đã tồn tại!", "err");
+            return;
+          }
+        }
 
         const r = editProdId
           ? await api("PUT", `/api/products/${editProdId}`, body)
@@ -5562,19 +5617,29 @@
           return;
         }
         tbody.innerHTML = att
-          .map(
-            (a) => `
-    <tr>
+          .map((a) => {
+            let statusHtml;
+            if (!a.checkout) {
+              statusHtml = '<span class="bx wn">Chưa checkout</span>';
+            } else {
+              const diffMs = new Date(a.checkout) - new Date(a.checkin);
+              const diffHours = diffMs / 3600000;
+              if (diffHours >= 4) {
+                statusHtml = `<span class="bx ok">Đủ ca (${diffHours.toFixed(1)}h)</span>`;
+              } else if (diffHours >= 1) {
+                statusHtml = `<span class="bx wn">Thiếu ca (${diffHours.toFixed(1)}h)</span>`;
+              } else {
+                const diffMin = Math.round(diffMs / 60000);
+                statusHtml = `<span class="bx ng">Chưa đủ (${diffMin} phút)</span>`;
+              }
+            }
+            return `<tr>
       <td>${fmtDateOnly(a.date)}</td>
       <td>${fmtTime(a.checkin)}</td>
       <td>${fmtTime(a.checkout)}</td>
-      <td>${
-        a.checkout
-          ? '<span class="bx ok">Đủ ca</span>'
-          : '<span class="bx wn">Chưa checkout</span>'
-      }</td>
-    </tr>`,
-          )
+      <td>${statusHtml}</td>
+    </tr>`;
+          })
           .join("");
       }
 
@@ -5707,9 +5772,27 @@
         const uname = document.getElementById("uUser").value.trim();
         const pass = document.getElementById("uPass").value;
         const role = document.getElementById("uRole").value;
-        if (!name || !uname || !pass) {
-          document.getElementById("uErr").textContent =
-            "Vui lòng điền đầy đủ thông tin bắt buộc!";
+        const phone = document.getElementById("uPhone").value.trim();
+        const errEl = document.getElementById("uErr");
+        errEl.textContent = "";
+        if (!name) {
+          errEl.textContent = "Vui lòng điền Họ và tên!";
+          return;
+        }
+        if (!uname) {
+          errEl.textContent = "Vui lòng điền Tên đăng nhập!";
+          return;
+        }
+        if (!pass || pass.length < 6) {
+          errEl.textContent = "Mật khẩu phải ít nhất 6 ký tự!";
+          return;
+        }
+        if (!role) {
+          errEl.textContent = "Vui lòng chọn Vai trò!";
+          return;
+        }
+        if (phone && !/^[0-9]{10,11}$/.test(phone)) {
+          errEl.textContent = "Số điện thoại không hợp lệ (10-11 chữ số)!";
           return;
         }
         const r = await api("POST", "/api/users", {
@@ -5717,14 +5800,20 @@
           username: uname,
           password: pass,
           role_id: parseInt(role),
-          email: document.getElementById("uEmail").value || undefined,
-          phone: document.getElementById("uPhone").value || undefined,
+          email: document.getElementById("uEmail").value.trim() || null,
+          phone: phone || null,
         });
         if (r?.message) {
           closeMo("moUser");
+          // Reset form
+          ["uName", "uUser", "uPass", "uEmail", "uPhone"].forEach(
+            (id) => (document.getElementById(id).value = ""),
+          );
+          document.getElementById("uErr").textContent = "";
           loadUsers();
           toast(r.message);
         } else {
+          // Hiển thị lỗi rõ ràng (bao gồm "Tên đăng nhập đã tồn tại")
           document.getElementById("uErr").textContent =
             r?.error || "Lỗi hệ thống";
         }
@@ -6016,20 +6105,30 @@
           return;
         }
         tbody.innerHTML = list
-          .map(
-            (a) => `
-    <tr>
+          .map((a) => {
+            let statusHtml;
+            if (!a.checkout) {
+              statusHtml = '<span class="bx wn">Đang làm việc</span>';
+            } else {
+              const diffMs = new Date(a.checkout) - new Date(a.checkin);
+              const diffHours = diffMs / 3600000;
+              if (diffHours >= 4) {
+                statusHtml = `<span class="bx ok">Đủ ca (${diffHours.toFixed(1)}h)</span>`;
+              } else if (diffHours >= 1) {
+                statusHtml = `<span class="bx wn">Thiếu ca (${diffHours.toFixed(1)}h)</span>`;
+              } else {
+                const diffMin = Math.round(diffMs / 60000);
+                statusHtml = `<span class="bx ng">Chưa đủ (${diffMin} phút)</span>`;
+              }
+            }
+            return `<tr>
       <td><strong>${a.full_name}</strong></td>
       <td><span class="bx in">${a.role_display}</span></td>
       <td>${fmtTime(a.checkin)}</td>
       <td>${fmtTime(a.checkout)}</td>
-      <td>${
-        a.checkout
-          ? '<span class="bx ok">Đủ ca</span>'
-          : '<span class="bx wn">Đang làm việc</span>'
-      }</td>
-    </tr>`,
-          )
+      <td>${statusHtml}</td>
+    </tr>`;
+          })
           .join("");
       }
 
