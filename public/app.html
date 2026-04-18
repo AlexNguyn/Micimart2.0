@@ -3855,10 +3855,13 @@
             logout();
             return null;
           }
-          return await r.json();
+          // Trả về body dù thành công hay lỗi để caller xử lý đúng
+          const data = await r.json();
+          if (!r.ok && !data.error) data.error = `Lỗi ${r.status}`;
+          return data;
         } catch (e) {
           console.error("API error:", path, e);
-          return null;
+          return { error: "Không thể kết nối server" };
         }
       }
 
@@ -5564,7 +5567,9 @@
       //  MY ORDERS (CUSTOMER)
       // ══════════════════════════════════════════════════════════
       async function loadMyOrders() {
-        const orders = (await api("GET", "/api/orders/my-orders")) || [];
+        const all = (await api("GET", "/api/orders/my-orders")) || [];
+        // Ẩn các đơn hàng đã bị hủy
+        const orders = all.filter((o) => o.status !== "cancelled");
         const tbody = document.getElementById("myOrderTable");
 
         if (!orders.length) {
